@@ -6,3 +6,4 @@ aiohttp
 sqlalchemy
 psycopg2-binary
 alembic
+python-multipart
