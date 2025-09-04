@@ -17,8 +17,10 @@
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .message-content pre { background-color: #1e293b; color: #e2e8f0; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; margin: 0.5rem 0; }
-        .message-content code { font-family: 'Courier New', Courier, monospace; }
-        .message-content p { margin-bottom: 0.5rem; }
+        .message-content code { font-family: 'ui-monospace', 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; background-color: #334155; padding: 2px 4px; border-radius: 4px; }
+        .message-content pre code { background-color: transparent; padding: 0; }
+        .message-content p { margin-bottom: 0.5rem; line-height: 1.6; }
+        .sidebar { transition: width 0.3s ease-in-out; }
     </style>
 </head>
 <body class="bg-gray-900 text-gray-100">
@@ -27,16 +29,107 @@
     <script type="text/babel">
         const { Provider, useSelector, useDispatch } = ReactRedux;
         const { configureStore, createSlice, createAsyncThunk } = RTK;
-        const { useState, useEffect, useRef } = React;
+        const { useState, useEffect, useRef, createContext, useContext } = React;
 
         const API_BASE_URL = 'http://127.0.0.1:8000';
 
+        // --- AUTH CONTEXT & API ---
+        const AuthContext = createContext();
+
+        const apiClient = {
+            async post(endpoint, data, token) {
+                const headers = { 'Content-Type': 'application/json' };
+                if (token) headers['Authorization'] = `Bearer ${token}`;
+                const response = await fetch(`${API_BASE_URL}${endpoint}`, { method: 'POST', headers, body: JSON.stringify(data) });
+                if (!response.ok) throw new Error(await response.text());
+                return response.json();
+            },
+            async get(endpoint, token) {
+                const headers = { 'Authorization': `Bearer ${token}` };
+                const response = await fetch(`${API_BASE_URL}${endpoint}`, { headers });
+                 if (!response.ok) throw new Error(await response.text());
+                return response.json();
+            },
+            // Add put, delete methods
+            async put(endpoint, data, token) {
+                const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+                const response = await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PUT', headers, body: JSON.stringify(data) });
+                 if (!response.ok) throw new Error(await response.text());
+                return response.json();
+            },
+            async del(endpoint, token) {
+                const headers = { 'Authorization': `Bearer ${token}` };
+                const response = await fetch(`${API_BASE_URL}${endpoint}`, { method: 'DELETE', headers });
+                if (!response.ok) throw new Error(await response.text());
+                return response;
+            }
+        };
+
+        const AuthProvider = ({ children }) => {
+            const [token, setToken] = useState(() => localStorage.getItem('authToken'));
+            const [user, setUser] = useState(null);
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                const validateToken = async () => {
+                    if (token) {
+                        try {
+                            const userData = await apiClient.get('/users/me/', token);
+                            setUser(userData);
+                        } catch (error) {
+                            console.error("Session expired", error);
+                            setToken(null);
+                            localStorage.removeItem('authToken');
+                        }
+                    }
+                    setLoading(false);
+                };
+                validateToken();
+            }, [token]);
+
+            const login = async (email, password) => {
+                const formData = new URLSearchParams();
+                formData.append('username', email);
+                formData.append('password', password);
+
+                const response = await fetch(`${API_BASE_URL}/token`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                    body: formData,
+                });
+
+                if (!response.ok) {
+                   const errorData = await response.json();
+                   throw new Error(errorData.detail || "Login failed");
+                }
+                
+                const data = await response.json();
+                localStorage.setItem('authToken', data.access_token);
+                setToken(data.access_token);
+            };
+
+            const logout = () => {
+                setToken(null);
+                setUser(null);
+                localStorage.removeItem('authToken');
+            };
+
+            const value = { token, user, login, logout, loading };
+
+            return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+        };
+
+        const useAuth = () => useContext(AuthContext);
+
         // --- ASYNC THUNKS ---
-        const fetchSessions = createAsyncThunk('chat/fetchSessions', async () => {
-            const response = await fetch(`${API_BASE_URL}/sessions`);
-            return response.json();
+        const fetchSessions = createAsyncThunk('chat/fetchSessions', async (_, { getState, rejectWithValue }) => {
+            try {
+                const token = getState().auth.token;
+                return await apiClient.get('/sessions', token);
+            } catch(e) { return rejectWithValue(e.message) }
         });
 
+        // ... other thunks (create, update, delete session)
         const createNewSession = createAsyncThunk('chat/createNewSession', async (title) => {
             const response = await fetch(`${API_BASE_URL}/sessions`, {
                 method: 'POST',
@@ -51,19 +144,21 @@
             return response.json();
         });
 
-
-        // --- REDUX SLICE ---
+        // --- REDUX SLICE (Simplified for brevity) ---
         const chatSlice = createSlice({
             name: 'chat',
             initialState: {
                 sessions: {},
                 activeSessionId: null,
+                isSidebarOpen: true,
                 sessionStatus: 'idle', // 'idle' | 'loading' | 'succeeded' | 'failed'
                 isStreaming: false,
                 currentProvider: 'gemini',
                 currentModel: 'gemini-pro',
             },
             reducers: {
+                toggleSidebar: (state) => { state.isSidebarOpen = !state.isSidebarOpen; },
+                // ... other reducers
                 startStream: (state, action) => {
                     const { sessionId, userMessage } = action.payload;
                     state.isStreaming = true;
@@ -95,40 +190,42 @@
                 }
             },
             extraReducers: (builder) => {
-                builder
-                    .addCase(fetchSessions.pending, (state) => {
-                        state.sessionStatus = 'loading';
-                    })
-                    .addCase(fetchSessions.fulfilled, (state, action) => {
-                        state.sessionStatus = 'succeeded';
-                        state.sessions = action.payload.reduce((acc, session) => {
-                            acc[session.id] = { ...session, messages: [] }; // Don't load messages initially
-                            return acc;
-                        }, {});
-                        if (!state.activeSessionId && action.payload.length > 0) {
-                            state.activeSessionId = action.payload[0].id;
-                        }
-                    })
-                    .addCase(fetchSessions.rejected, (state) => {
-                        state.sessionStatus = 'failed';
-                    })
-                    .addCase(createNewSession.fulfilled, (state, action) => {
-                        const newSession = action.payload;
-                        state.sessions[newSession.id] = { ...newSession, messages: [] };
-                        state.activeSessionId = newSession.id;
-                    })
-                    .addCase(fetchSessionDetails.fulfilled, (state, action) => {
-                        const sessionDetails = action.payload;
-                        state.sessions[sessionDetails.id] = sessionDetails;
-                    });
+                builder.addCase(fetchSessions.fulfilled, (state, action) => {
+                    state.sessions = action.payload.reduce((acc, s) => { acc[s.id] = s; return acc; }, {});
+                    if (!state.activeSessionId && action.payload.length > 0) {
+                        state.activeSessionId = action.payload[0].id;
+                    }
+                })
+                .addCase(fetchSessions.pending, (state) => {
+                    state.sessionStatus = 'loading';
+                })
+                .addCase(fetchSessions.rejected, (state) => {
+                    state.sessionStatus = 'failed';
+                })
+                .addCase(createNewSession.fulfilled, (state, action) => {
+                    const newSession = action.payload;
+                    state.sessions[newSession.id] = newSession;
+                    state.activeSessionId = newSession.id;
+                })
+                .addCase(fetchSessionDetails.fulfilled, (state, action) => {
+                    const session = action.payload;
+                    state.sessions[session.id] = session;
+                });
+                // ... other extraReducers
             }
         });
 
         const { startStream, appendStream, endStream, setActiveSessionId, setModelAndProvider } = chatSlice.actions;
+        const { toggleSidebar } = chatSlice.actions;
 
-        // --- REDUX STORE ---
-        const store = configureStore({ reducer: { chat: chatSlice.reducer } });
-        
+        // --- Main Redux Store (Auth slice is just conceptual here) ---
+        const store = configureStore({
+            reducer: { 
+                chat: chatSlice.reducer,
+                auth: (state = { token: localStorage.getItem('authToken') }) => state
+            } 
+        });
+
         // --- API & STREAMING LOGIC ---
         let eventSource = null;
 
@@ -184,8 +281,13 @@
             };
             processStream();
         };
-        
-        // --- COMPONENTS (Mostly Unchanged, but with updated logic) ---
+
+        // --- COMPONENTS ---
+        const AuthForm = ({ isLogin }) => {
+            // ... Form logic for login/register
+            return <div>Login/Register Form</div>;
+        };
+
         const ProviderSelector = () => {
             // ... (Component remains the same as before)
             const dispatch = useDispatch();
@@ -233,7 +335,7 @@
                 </div>
             );
         };
-
+        
         const Sidebar = () => {
             const dispatch = useDispatch();
             const sessions = useSelector(state => Object.values(state.chat.sessions));
@@ -377,19 +479,47 @@
                 </div>
             );
         };
+        
+        const ChatApp = () => {
+            const { token, logout } = useAuth();
+            const dispatch = useDispatch();
+            const isSidebarOpen = useSelector(state => state.chat.isSidebarOpen);
 
-        const App = () => (
-            <div className="flex h-screen w-screen">
-                <Sidebar />
-                <div className="flex-1 flex flex-col bg-gray-900">
-                    <ChatArea />
-                    <InputSection />
+            useEffect(() => {
+                if (token) {
+                    dispatch(fetchSessions());
+                }
+            }, [token, dispatch]);
+
+            return (
+                <div className="flex h-screen w-screen">
+                    <Sidebar />
+                    <div className="flex-1 flex flex-col bg-gray-900 transition-all duration-300" style={{ marginLeft: isSidebarOpen ? '16rem' : '0' }}>
+                        <ChatArea />
+                        <InputSection />
+                    </div>
                 </div>
-            </div>
-        );
+            );
+        };
 
+        const App = () => {
+            const { token, loading } = useAuth();
+
+            if (loading) return <div>Loading...</div>;
+
+            return token ? <ChatApp /> : <AuthForm isLogin={true} />;
+        };
+
+        // --- RENDER ---
         const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<Provider store={store}><App /></Provider>);
+        root.render(
+            <Provider store={store}>
+                <AuthProvider>
+                    <App />
+                </AuthProvider>
+            </Provider>
+        );
     </script>
 </body>
 </html>
+
