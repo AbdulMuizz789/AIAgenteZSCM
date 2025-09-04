@@ -33,34 +33,45 @@
 
         const API_BASE_URL = 'http://127.0.0.1:8000';
 
-        // --- AUTH CONTEXT & API ---
+        // --- AUTH CONTEXT & API CLIENT ---
         const AuthContext = createContext();
 
         const apiClient = {
-            async post(endpoint, data, token) {
-                const headers = { 'Content-Type': 'application/json' };
+            async post(endpoint, data, token, contentType = 'application/json') {
+                const headers = { 'Content-Type': contentType };
                 if (token) headers['Authorization'] = `Bearer ${token}`;
-                const response = await fetch(`${API_BASE_URL}${endpoint}`, { method: 'POST', headers, body: JSON.stringify(data) });
-                if (!response.ok) throw new Error(await response.text());
-                return response.json();
+                
+                let body;
+                if (contentType === 'application/json') {
+                    body = JSON.stringify(data);
+                } else {
+                    body = new URLSearchParams(data);
+                }
+
+                const response = await fetch(`${API_BASE_URL}${endpoint}`, { method: 'POST', headers, body });
+                
+                const responseData = await response.json();
+                if (!response.ok) throw responseData;
+                return responseData;
             },
             async get(endpoint, token) {
                 const headers = { 'Authorization': `Bearer ${token}` };
                 const response = await fetch(`${API_BASE_URL}${endpoint}`, { headers });
-                 if (!response.ok) throw new Error(await response.text());
-                return response.json();
+                const responseData = await response.json();
+                if (!response.ok) throw responseData;
+                return responseData;
             },
-            // Add put, delete methods
-            async put(endpoint, data, token) {
+             async put(endpoint, data, token) {
                 const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
                 const response = await fetch(`${API_BASE_URL}${endpoint}`, { method: 'PUT', headers, body: JSON.stringify(data) });
-                 if (!response.ok) throw new Error(await response.text());
-                return response.json();
+                const responseData = await response.json();
+                if (!response.ok) throw responseData;
+                return responseData;
             },
             async del(endpoint, token) {
                 const headers = { 'Authorization': `Bearer ${token}` };
                 const response = await fetch(`${API_BASE_URL}${endpoint}`, { method: 'DELETE', headers });
-                if (!response.ok) throw new Error(await response.text());
+                if (!response.ok) throw await response.json();
                 return response;
             }
         };
@@ -88,24 +99,14 @@
             }, [token]);
 
             const login = async (email, password) => {
-                const formData = new URLSearchParams();
-                formData.append('username', email);
-                formData.append('password', password);
-
-                const response = await fetch(`${API_BASE_URL}/token`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-                    body: formData,
-                });
-
-                if (!response.ok) {
-                   const errorData = await response.json();
-                   throw new Error(errorData.detail || "Login failed");
-                }
-                
-                const data = await response.json();
+                const data = await apiClient.post('/token', { username: email, password }, null, 'application/x-www-form-urlencoded');
                 localStorage.setItem('authToken', data.access_token);
                 setToken(data.access_token);
+            };
+
+            const register = async (username, email, password) => {
+                await apiClient.post('/users/', { username, email, password });
+                await login(email, password); // Auto-login after registration
             };
 
             const logout = () => {
@@ -114,14 +115,13 @@
                 localStorage.removeItem('authToken');
             };
 
-            const value = { token, user, login, logout, loading };
-
+            const value = { token, user, login, register, logout, loading, apiClient };
             return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
         };
 
         const useAuth = () => useContext(AuthContext);
 
-        // --- ASYNC THUNKS ---
+       // --- ASYNC THUNKS ---
         const fetchSessions = createAsyncThunk('chat/fetchSessions', async (_, { getState, rejectWithValue }) => {
             try {
                 const token = getState().auth.token;
@@ -133,14 +133,17 @@
         const createNewSession = createAsyncThunk('chat/createNewSession', async (title) => {
             const response = await fetch(`${API_BASE_URL}/sessions`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('authToken')}` },
                 body: JSON.stringify({ title: title || "New Chat" })
             });
             return response.json();
         });
         
         const fetchSessionDetails = createAsyncThunk('chat/fetchSessionDetails', async (sessionId) => {
-            const response = await fetch(`${API_BASE_URL}/sessions/${sessionId}`);
+            const response = await fetch(`${API_BASE_URL}/sessions/${sessionId}`, {
+                method: 'GET',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('authToken')}` },
+            });
             return response.json();
         });
 
@@ -221,8 +224,7 @@
         // --- Main Redux Store (Auth slice is just conceptual here) ---
         const store = configureStore({
             reducer: { 
-                chat: chatSlice.reducer,
-                auth: (state = { token: localStorage.getItem('authToken') }) => state
+                chat: chatSlice.reducer
             } 
         });
 
@@ -237,7 +239,7 @@
 
             const response = await fetch(`${API_BASE_URL}/chat/stream`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('authToken')}` },
                 body: JSON.stringify({ session_id: sessionId, prompt, provider, model })
             });
             
@@ -283,9 +285,87 @@
         };
 
         // --- COMPONENTS ---
-        const AuthForm = ({ isLogin }) => {
-            // ... Form logic for login/register
-            return <div>Login/Register Form</div>;
+        const AuthForm = () => {
+            const [isLogin, setIsLogin] = useState(true);
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [username, setUsername] = useState('');
+            const [error, setError] = useState(null);
+            const [loading, setLoading] = useState(false);
+            const { login, register } = useAuth();
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setError(null);
+                setLoading(true);
+                try {
+                    if (isLogin) {
+                        await login(email, password);
+                    } else {
+                        await register(username, email, password);
+                    }
+                } catch (err) {
+                    setError(err.detail || 'An unexpected error occurred.');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            return (
+                <div className="flex items-center justify-center h-screen bg-gray-900">
+                    <div className="w-full max-w-md p-8 space-y-8 bg-gray-800 rounded-lg shadow-lg">
+                        <div>
+                            <h2 className="text-3xl font-extrabold text-center text-white">
+                                {isLogin ? 'Sign in to your account' : 'Create a new account'}
+                            </h2>
+                            <p className="mt-2 text-sm text-center text-gray-400">
+                                or&nbsp;
+                                <a href="#" onClick={() => setIsLogin(!isLogin)} className="font-medium text-indigo-400 hover:text-indigo-300">
+                                    {isLogin ? 'create an account' : 'sign in instead'}
+                                </a>
+                            </p>
+                        </div>
+                        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
+                            {!isLogin && (
+                                <input
+                                    type="text"
+                                    value={username}
+                                    onChange={(e) => setUsername(e.target.value)}
+                                    className="w-full px-3 py-2 text-white bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                    placeholder="Username"
+                                    required
+                                />
+                            )}
+                            <input
+                                type="email"
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
+                                className="w-full px-3 py-2 text-white bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                placeholder="Email address"
+                                required
+                            />
+                            <input
+                                type="password"
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                className="w-full px-3 py-2 mt-4 text-white bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                placeholder="Password"
+                                required
+                            />
+                            {error && <p className="text-sm text-red-400">{error}</p>}
+                            <div>
+                                <button
+                                    type="submit"
+                                    disabled={loading}
+                                    className="relative flex justify-center w-full px-4 py-2 text-sm font-medium text-white bg-indigo-600 border border-transparent rounded-md group hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-indigo-400"
+                                >
+                                    {loading ? 'Processing...' : (isLogin ? 'Sign in' : 'Create account')}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            );
         };
 
         const ProviderSelector = () => {
@@ -363,7 +443,8 @@
                     </div>
                     <div className="flex-grow overflow-y-auto no-scrollbar pr-1">
                         <p className="text-xs text-gray-500 font-semibold mb-2 px-2">RECENT</p>
-                        {sessionStatus === 'loading' && <p>Loading...</p>}
+                        {sessionStatus === 'loading' && <p className="text-sm text-gray-400 px-2">Loading sessions...</p>}
+                        {sessions.length === 0 && <p className="text-sm text-gray-400 px-2">No sessions yet. Click + to start a new chat.</p>}
                         {sessions.map(session => (
                             <div key={session.id} onClick={() => handleSetActive(session.id)}
                                 className={`truncate px-3 py-2 rounded-md cursor-pointer text-sm mb-1 ${activeSessionId === session.id ? 'bg-gray-700' : 'hover:bg-gray-700/50'}`}>
@@ -479,7 +560,7 @@
                 </div>
             );
         };
-        
+
         const ChatApp = () => {
             const { token, logout } = useAuth();
             const dispatch = useDispatch();
@@ -502,12 +583,37 @@
             );
         };
 
+        // const ChatApp = () => {
+        //     // This is a placeholder for your main chat application UI.
+        //     // You would integrate your Sidebar, ChatArea, etc., here.
+        //     const { user, logout } = useAuth();
+
+        //     return (
+        //          <div className="flex flex-col items-center justify-center h-screen">
+        //             <h1 className="text-4xl">Welcome, {user?.username || 'User'}!</h1>
+        //             <p className="text-gray-400">This is the main chat application.</p>
+        //             <button 
+        //                 onClick={logout}
+        //                 className="px-4 py-2 mt-8 font-bold text-white bg-red-600 rounded hover:bg-red-700"
+        //             >
+        //                 Logout
+        //             </button>
+        //         </div>
+        //     );
+        // };
+
         const App = () => {
             const { token, loading } = useAuth();
 
-            if (loading) return <div>Loading...</div>;
+            if (loading) {
+                return (
+                    <div className="flex items-center justify-center h-screen">
+                        <div className="w-16 h-16 border-4 border-dashed rounded-full animate-spin border-indigo-500"></div>
+                    </div>
+                );
+            }
 
-            return token ? <ChatApp /> : <AuthForm isLogin={true} />;
+            return token ? <ChatApp /> : <AuthForm isLogin={true}/>;
         };
 
         // --- RENDER ---
@@ -522,4 +628,3 @@
     </script>
 </body>
 </html>
-
