@@ -3,5 +3,3 @@ chat_log.txt
 chatbot.py
 test.py
 /__pycache__
-/alembic
-alembic.ini
