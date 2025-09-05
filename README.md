@@ -50,7 +50,7 @@ Then
 alembic revision --autogenerate -m "Initialize DB"
 alembic upgrade head
 ```
-### Configure: Copy env.example to .env and add your API keys
+### Configure: Copy env.example to .env and add your API keys, Postgres username and password and Secret key for JWT
 ### Run Backend on port 8000: 
 ```bash
 uvicorn main:app
@@ -67,3 +67,4 @@ This project satisfies these mandatory requirements:
 <!-- - ✅ **Error Handling + Limits** (10 marks) - Rate limiting, token caps  -->
 
 - ✅ **Repo/Docs Hygiene** (10 marks) - Professional structure
+
