@@ -13,7 +13,8 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-        body { font-family: 'Inter', sans-serif; overflow: hidden; }
+        html, body, #root { height: 100%; overflow: hidden; }
+        body { font-family: 'Inter', sans-serif; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .message-content pre { background-color: #1e293b; color: #e2e8f0; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; margin: 0.5rem 0; }
@@ -37,27 +38,21 @@
         const AuthContext = createContext();
 
         const apiClient = {
-            async post(endpoint, data, token = null, contentType = 'application/json') {
+            async post(endpoint, data, token, contentType = 'application/json') {
                 const headers = { 'Content-Type': contentType };
-                const authToken = token || localStorage.getItem('authToken');
-                if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+                if (token) headers['Authorization'] = `Bearer ${token}`;
                 
                 let body;
-                if (contentType === 'application/json') {
-                    body = JSON.stringify(data);
-                } else {
-                    body = new URLSearchParams(data);
-                }
+                if (contentType === 'application/json') { body = JSON.stringify(data); } 
+                else { body = new URLSearchParams(data); }
 
                 const response = await fetch(`${API_BASE_URL}${endpoint}`, { method: 'POST', headers, body });
-                
                 const responseData = await response.json();
                 if (!response.ok) throw responseData;
                 return responseData;
             },
             async get(endpoint, token) {
-                const authToken = token || localStorage.getItem('authToken');
-                const headers = { 'Authorization': `Bearer ${authToken}` };
+                const headers = { 'Authorization': `Bearer ${token}` };
                 const response = await fetch(`${API_BASE_URL}${endpoint}`, { headers });
                 const responseData = await response.json();
                 if (!response.ok) throw responseData;
@@ -73,12 +68,12 @@
             async del(endpoint, token) {
                 const headers = { 'Authorization': `Bearer ${token}` };
                 const response = await fetch(`${API_BASE_URL}${endpoint}`, { method: 'DELETE', headers });
-                if (!response.ok) throw await response.json();
+                if (response.status !== 204 && !response.ok) throw await response.json();
                 return response;
             }
         };
 
-        const AuthProvider = ({ children }) => {
+        const AuthProvider = ({ children }) => { 
             const [token, setToken] = useState(() => localStorage.getItem('authToken'));
             const [user, setUser] = useState(null);
             const [loading, setLoading] = useState(true);
@@ -108,7 +103,7 @@
 
             const register = async (username, email, password) => {
                 await apiClient.post('/users/', { username, email, password });
-                await login(email, password); // Auto-login after registration
+                await login(email, password);
             };
 
             const logout = () => {
@@ -123,32 +118,17 @@
 
         const useAuth = () => useContext(AuthContext);
 
-       // --- ASYNC THUNKS ---
-        const fetchSessions = createAsyncThunk('chat/fetchSessions', async (_, { getState, rejectWithValue }) => {
-            try {
-                return await apiClient.get('/sessions');
-            } catch(e) { return rejectWithValue(e.message) }
+        // --- REDUX THUNKS ---
+        const fetchSessions = createAsyncThunk('chat/fetchSessions', async (_, { extra: { apiClient, token } }) => apiClient.get('/sessions', token));
+        const createNewSession = createAsyncThunk('chat/createNewSession', async (title, { extra: { apiClient, token } }) => apiClient.post('/sessions', { title }, token));
+        const fetchSessionDetails = createAsyncThunk('chat/fetchSessionDetails', async (sessionId, { extra: { apiClient, token } }) => apiClient.get(`/sessions/${sessionId}`, token));
+        const updateSessionTitle = createAsyncThunk('chat/updateSessionTitle', async ({ sessionId, title }, { extra: { apiClient, token } }) => apiClient.put(`/sessions/${sessionId}`, { title }, token));
+        const deleteSession = createAsyncThunk('chat/deleteSession', async (sessionId, { extra: { apiClient, token } }) => {
+            await apiClient.del(`/sessions/${sessionId}`, token);
+            return sessionId;
         });
 
-        // ... other thunks (create, update, delete session)
-        const createNewSession = createAsyncThunk('chat/createNewSession', async (title) => {
-            const response = await fetch(`${API_BASE_URL}/sessions`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('authToken')}` },
-                body: JSON.stringify({ title: title || "New Chat" })
-            });
-            return response.json();
-        });
-        
-        const fetchSessionDetails = createAsyncThunk('chat/fetchSessionDetails', async (sessionId) => {
-            const response = await fetch(`${API_BASE_URL}/sessions/${sessionId}`, {
-                method: 'GET',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('authToken')}` },
-            });
-            return response.json();
-        });
-
-        // --- REDUX SLICE (Simplified for brevity) ---
+        // --- REDUX SLICE ---
         const chatSlice = createSlice({
             name: 'chat',
             initialState: {
@@ -162,7 +142,6 @@
             },
             reducers: {
                 toggleSidebar: (state) => { state.isSidebarOpen = !state.isSidebarOpen; },
-                // ... other reducers
                 startStream: (state, action) => {
                     const { sessionId, userMessage } = action.payload;
                     state.isStreaming = true;
@@ -172,121 +151,111 @@
                 },
                 appendStream: (state, action) => {
                     const { sessionId, delta } = action.payload;
-                    const session = state.sessions[sessionId];
-                    if (session) {
-                        const lastMessage = session.messages[session.messages.length - 1];
-                        if (lastMessage?.role === 'assistant') {
-                            lastMessage.content += delta;
-                        }
-                    }
+                    const lastMessage = state.sessions[sessionId]?.messages.slice(-1)[0];
+                    if (lastMessage?.role === 'assistant') lastMessage.content += delta;
                 },
-                endStream: (state, action) => {
-                    // When streaming ends, we fetch the final state from the server
-                    // to ensure consistency and get the real message ID.
-                    state.isStreaming = false;
-                },
-                setActiveSessionId: (state, action) => {
-                    state.activeSessionId = action.payload;
-                },
-                 setModelAndProvider: (state, action) => {
+                endStream: (state) => { state.isStreaming = false; },
+                setActiveSessionId: (state, action) => { state.activeSessionId = action.payload; },
+                setModelAndProvider: (state, action) => {
                     state.currentProvider = action.payload.provider;
                     state.currentModel = action.payload.model;
-                }
+                },
             },
             extraReducers: (builder) => {
-                builder.addCase(fetchSessions.fulfilled, (state, action) => {
-                    state.sessions = action.payload.reduce((acc, s) => { acc[s.id] = s; return acc; }, {});
-                    if (!state.activeSessionId && action.payload.length > 0) {
-                        state.activeSessionId = action.payload[0].id;
-                    }
-                    state.sessionStatus = 'succeeded';
-                })
-                .addCase(fetchSessions.pending, (state) => {
-                    state.sessionStatus = 'loading';
-                })
-                .addCase(fetchSessions.rejected, (state) => {
-                    state.sessionStatus = 'failed';
-                })
-                .addCase(createNewSession.fulfilled, (state, action) => {
-                    const newSession = action.payload;
-                    state.sessions[newSession.id] = newSession;
-                    state.activeSessionId = newSession.id;
-                })
-                .addCase(fetchSessionDetails.fulfilled, (state, action) => {
-                    const session = action.payload;
-                    state.sessions[session.id] = session;
-                });
-                // ... other extraReducers
+                builder
+                    .addCase(fetchSessions.pending, (state) => { state.sessionStatus = 'loading'; })
+                    .addCase(fetchSessions.fulfilled, (state, action) => {
+                        state.sessionStatus = 'succeeded';
+                        state.sessions = action.payload.reduce((acc, session) => {
+                            acc[session.id] = { ...session, messages: [] };
+                            return acc;
+                        }, {});
+                        if (!state.activeSessionId && action.payload.length > 0) {
+                            state.activeSessionId = action.payload[0].id;
+                        }
+                    })
+                    .addCase(fetchSessions.rejected, (state) => {
+                        state.sessionStatus = 'failed';
+                    })
+                    .addCase(createNewSession.fulfilled, (state, action) => {
+                        const newSession = action.payload;
+                        state.sessions[newSession.id] = { ...newSession, messages: [] };
+                        state.activeSessionId = newSession.id;
+                    })
+                    .addCase(fetchSessionDetails.fulfilled, (state, action) => {
+                        state.sessions[action.payload.id] = action.payload;
+                    })
+                    .addCase(updateSessionTitle.fulfilled, (state, action) => {
+                        state.sessions[action.payload.id].title = action.payload.title;
+                    })
+                    .addCase(deleteSession.fulfilled, (state, action) => {
+                        delete state.sessions[action.payload];
+                        if (state.activeSessionId === action.payload) {
+                            state.activeSessionId = Object.keys(state.sessions)[0] || null;
+                        }
+                    });
             }
         });
 
         const { toggleSidebar, startStream, appendStream, endStream, setActiveSessionId, setModelAndProvider } = chatSlice.actions;
 
-        // --- Main Redux Store ---
+        // --- REDUX STORE ---
         const store = configureStore({
             reducer: { 
-                chat: chatSlice.reducer
-            } 
+                chat: chatSlice.reducer,
+                auth: (state = { token: localStorage.getItem('authToken') }) => state
+            },
+            middleware: (getDefaultMiddleware) => getDefaultMiddleware({
+                thunk: { extraArgument: { apiClient, token: localStorage.getItem('authToken') } }
+            }),
         });
 
-        // --- API & STREAMING LOGIC ---
-        let eventSource = null;
-
-        const streamChatResponse = (payload) => async (dispatch) => {
+        // --- STREAMING LOGIC ---
+        const streamChatResponse = (payload) => async (dispatch, getState) => {
+            const { token } = getState().auth;
             const { sessionId, prompt, provider, model } = payload;
-            
             const userMessage = { id: `user-${Date.now()}`, role: 'user', content: prompt };
+
             dispatch(startStream({ sessionId, userMessage }));
 
             const response = await fetch(`${API_BASE_URL}/chat/stream`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('authToken')}` },
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 body: JSON.stringify({ session_id: sessionId, prompt, provider, model })
             });
-            
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
 
-            const processStream = async () => {
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-
-                    const chunk = decoder.decode(value, { stream: true });
-                    const events = chunk.split('\n\n').filter(Boolean);
-
-                    for (const event of events) {
-                        if (event.startsWith('data: ')) {
-                            const dataStr = event.substring(6);
-                            if (dataStr === "[DONE]") {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                const chunk = decoder.decode(value, { stream: true });
+                const events = chunk.split('\n\n').filter(Boolean);
+                for (const event of events) {
+                    if (event.startsWith('data: ')) {
+                        const dataStr = event.substring(6);
+                        if (dataStr === "[DONE]") {
+                            dispatch(endStream());
+                            dispatch(fetchSessionDetails(sessionId));
+                            return;
+                        }
+                        try {
+                            const data = JSON.parse(dataStr);
+                            if (data.delta) dispatch(appendStream({ sessionId, delta: data.delta }));
+                            if (data.error) {
+                                console.error("Stream error:", data.error);
                                 dispatch(endStream());
-                                // Fetch final message from server to sync state
-                                dispatch(fetchSessionDetails(sessionId)); 
+                                dispatch(fetchSessionDetails(sessionId));
                                 return;
                             }
-                            try {
-                                const data = JSON.parse(dataStr);
-                                if (data.delta) {
-                                    dispatch(appendStream({ sessionId, delta: data.delta }));
-                                }
-                                if (data.error) {
-                                    console.error("Stream error:", data.error);
-                                    dispatch(endStream());
-                                    dispatch(fetchSessionDetails(sessionId));
-                                    return;
-                                }
-                            } catch (e) {
-                                console.error("JSON parse error", e);
-                            }
-                        }
+                        } catch (e) { console.error("JSON parse error", e); }
                     }
                 }
-            };
-            processStream();
+            }
         };
-
+        
         // --- COMPONENTS ---
-        const AuthForm = () => {
+        const AuthForm = () => {  
             const [isLogin, setIsLogin] = useState(true);
             const [email, setEmail] = useState('');
             const [password, setPassword] = useState('');
@@ -328,38 +297,13 @@
                         </div>
                         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
                             {!isLogin && (
-                                <input
-                                    type="text"
-                                    value={username}
-                                    onChange={(e) => setUsername(e.target.value)}
-                                    className="w-full px-3 py-2 text-white bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                    placeholder="Username"
-                                    required
-                                />
+                                <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} className="w-full px-3 py-2 text-white bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Username" required />
                             )}
-                            <input
-                                type="email"
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                                className="w-full px-3 py-2 text-white bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                placeholder="Email address"
-                                required
-                            />
-                            <input
-                                type="password"
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                                className="w-full px-3 py-2 mt-4 text-white bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                placeholder="Password"
-                                required
-                            />
+                            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-3 py-2 text-white bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Email address" required />
+                            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-3 py-2 mt-4 text-white bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Password" required />
                             {error && <p className="text-sm text-red-400">{error}</p>}
                             <div>
-                                <button
-                                    type="submit"
-                                    disabled={loading}
-                                    className="relative flex justify-center w-full px-4 py-2 text-sm font-medium text-white bg-indigo-600 border border-transparent rounded-md group hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-indigo-400"
-                                >
+                                <button type="submit" disabled={loading} className="relative flex justify-center w-full px-4 py-2 text-sm font-medium text-white bg-indigo-600 border border-transparent rounded-md group hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-indigo-400">
                                     {loading ? 'Processing...' : (isLogin ? 'Sign in' : 'Create account')}
                                 </button>
                             </div>
@@ -368,26 +312,21 @@
                 </div>
             );
         };
-
-        const ProviderSelector = () => {
-            // ... (Component remains the same as before)
+        
+        const ProviderSelector = () => { 
             const dispatch = useDispatch();
-            const currentProvider = useSelector(state => state.chat.currentProvider);
-            const currentModel = useSelector(state => state.chat.currentModel);
+            const { currentProvider, currentModel } = useSelector(state => state.chat);
             const [isOpen, setIsOpen] = useState(false);
-
-            const providers = {
+            const providers = { 
                 openai: ['gpt-3.5-turbo', 'gpt-4.1'],
                 anthropic: ['claude-3-haiku', 'claude-3-sonnet'],
                 gemini: ['gemini-pro', 'gemini-flash'],
                 ollama: ['llama3', 'mistral']
             };
-
             const handleSelect = (provider, model) => {
                 dispatch(setModelAndProvider({ provider, model }));
                 setIsOpen(false);
             };
-
             return (
                 <div className="relative">
                     <button onClick={() => setIsOpen(!isOpen)} className="w-full bg-gray-700 hover:bg-gray-600 text-left px-4 py-2 rounded-lg transition-colors duration-200 flex justify-between items-center">
@@ -395,18 +334,16 @@
                             <span className="font-semibold capitalize">{currentProvider}</span>
                             <span className="text-gray-400 ml-2">{currentModel}</span>
                         </div>
-                        <svg className={`w-5 h-5 transition-transform duration-200 ${isOpen ? 'transform rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                        <svg className={`w-5 h-5 transition-transform duration-200 ${isOpen ? 'transform rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
                     </button>
                     {isOpen && (
-                        <div className="absolute bottom-full mb-2 w-full bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-10">
+                        <div className="absolute bottom-full mb-2 w-full bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-10 p-2">
                             {Object.entries(providers).map(([provider, models]) => (
                                 <div key={provider}>
-                                    <h3 className="text-sm font-bold text-gray-400 px-4 pt-3 capitalize">{provider}</h3>
+                                    <h3 className="text-sm font-bold text-gray-400 px-2 pt-2 capitalize">{provider}</h3>
                                     <ul>
                                         {models.map(model => (
-                                            <li key={model} onClick={() => handleSelect(provider, model)} className="px-4 py-2 hover:bg-gray-700 cursor-pointer rounded-md">
-                                                {model}
-                                            </li>
+                                        <li key={model} onClick={() => handleSelect(provider, model)} className="px-2 py-2 text-sm hover:bg-gray-700 cursor-pointer rounded-md">{model}</li>
                                         ))}
                                     </ul>
                                 </div>
@@ -419,66 +356,67 @@
         
         const Sidebar = () => {
             const dispatch = useDispatch();
-            const sessions = useSelector(state => Object.values(state.chat.sessions));
+            const { user, logout } = useAuth();
+            const sessions = useSelector(state => Object.values(state.chat.sessions).sort((a,b) => new Date(b.created_at) - new Date(a.created_at)));
             const activeSessionId = useSelector(state => state.chat.activeSessionId);
             const sessionStatus = useSelector(state => state.chat.sessionStatus);
 
             useEffect(() => {
-                if (sessionStatus === 'idle') {
-                    dispatch(fetchSessions());
-                }
+                if (sessionStatus === 'idle') dispatch(fetchSessions());
             }, [sessionStatus, dispatch]);
             
             const handleSetActive = (sessionId) => {
-                dispatch(setActiveSessionId(sessionId));
-                dispatch(fetchSessionDetails(sessionId));
+                // if (sessionId !== activeSessionId) {
+                    dispatch(setActiveSessionId(sessionId));
+                    dispatch(fetchSessionDetails(sessionId));
+                // }
             }
 
             return (
                 <div className="w-64 bg-gray-800 h-full flex flex-col p-3">
                     <div className="flex items-center justify-between mb-4">
                         <h1 className="text-xl font-bold">Chat AI</h1>
-                        <button onClick={() => dispatch(createNewSession())} className="p-2 rounded-md hover:bg-gray-700">
+                        <button onClick={() => dispatch(createNewSession('New Chat'))} className="p-2 rounded-md hover:bg-gray-700">
                             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
                         </button>
                     </div>
                     <div className="flex-grow overflow-y-auto no-scrollbar pr-1">
                         <p className="text-xs text-gray-500 font-semibold mb-2 px-2">RECENT</p>
-                        {sessionStatus === 'loading' && <p className="text-sm text-gray-400 px-2">Loading sessions...</p>}
-                        {sessions.length === 0 && <p className="text-sm text-gray-400 px-2">No sessions yet. Click + to start a new chat.</p>}
+                        {sessionStatus === 'loading' && <p>Loading...</p>}
                         {sessions.map(session => (
                             <div key={session.id} onClick={() => handleSetActive(session.id)}
-                                className={`truncate px-3 py-2 rounded-md cursor-pointer text-sm mb-1 ${activeSessionId === session.id ? 'bg-gray-700' : 'hover:bg-gray-700/50'}`}>
-                                {session.title}
+                                 className={`truncate px-3 py-2 rounded-md cursor-pointer text-sm mb-1 ${activeSessionId === session.id ? 'bg-gray-700' : 'hover:bg-gray-700/50'}`}>
+                                 {session.title}
                             </div>
                         ))}
                     </div>
-                    <div className="mt-auto">
+                    <div className="mt-auto flex flex-col gap-4">
                         <ProviderSelector />
+                        <div className="border-t border-gray-700 pt-3">
+                            <div className="flex items-center justify-between">
+                                <span className="text-sm truncate">{user?.email}</span>
+                                <button onClick={logout} className="p-2 rounded-md hover:bg-gray-700">
+                                    <svg className="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             );
         };
 
-        const ChatMessage = ({ message }) => {
-             // ... (Component remains the same as before)
+        const ChatMessage = ({ message }) => {  
             const isUser = message.role === 'user';
-            
             const renderContent = (content) => {
                 let html = content
-                    .replace(/```([\s\S]*?)```/g, (match, code) => `<pre><code>${code.trim().replace(/</g, "&lt;").replace(/>/g, "&gt;")}</code></pre>`)
-                    .replace(/`([^`]+)`/g, `<code>$1</code>`)
-                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                    .replace(/\*(.*?)\*/g, '<em>$1</em>')
-                    .replace(/\n/g, '<br />');
-                
-                html = html.replace(/<br \/>\s*(<pre>)/g, '$1').replace(/(<\/pre>)\s*<br \/>/g, '$1');
-                return { __html: html };
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;");
+                html = html.replace(/```([\s\S]*?)```/g, (match, code) => `<pre><code>${code.trim()}</code></pre>`).replace(/`([^`]+)`/g, `<code>$1</code>`).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br />');
+                return { __html: html.replace(/<br \/>\s*(<pre>)/g, '$1').replace(/(<\/pre>)\s*<br \/>/g, '$1') };
             };
-
             return (
-                <div className={`flex items-start gap-4 my-4 ${isUser ? 'pr-10' : ''}`}>
-                    <div className={`w-8 h-8 rounded-full flex-shrink-0 ${isUser ? 'bg-blue-500' : 'bg-green-500'} flex items-center justify-center font-bold`}>
+                <div className={`flex items-start gap-4 my-6`}>
+                    <div className={`w-8 h-8 rounded-full flex-shrink-0 ${isUser ? 'bg-indigo-500' : 'bg-green-500'} flex items-center justify-center font-bold text-sm`}>
                         {isUser ? 'U' : 'AI'}
                     </div>
                     <div className="flex-grow mt-1 message-content" dangerouslySetInnerHTML={renderContent(message.content || "")} />
@@ -495,18 +433,15 @@
                 messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
             }, [session?.messages]);
 
-            if (!session) {
-                return <div className="flex-1 flex items-center justify-center"><p>Select or create a new session.</p></div>;
+            if (!session) { 
+                return <div className="flex-1 flex items-center justify-center"><p>Select or create a new session to begin.</p></div>; 
             }
-
             return (
-                <div className="flex-1 flex flex-col">
-                    <div className="flex-grow overflow-y-auto p-6 no-scrollbar">
-                        {session.messages.map((msg) => (
-                            <ChatMessage key={msg.id} message={msg} />
-                        ))}
-                        <div ref={messagesEndRef} />
-                    </div>
+                <div className="flex-1 overflow-y-auto p-6">
+                    {session.messages?.map((msg) => (
+                        <ChatMessage key={msg.id} message={msg} />
+                    ))}
+                    <div ref={messagesEndRef} />
                 </div>
             );
         };
@@ -514,46 +449,36 @@
         const InputSection = () => {
             const [input, setInput] = useState('');
             const dispatch = useDispatch();
-            const isStreaming = useSelector(state => state.chat.isStreaming);
-            const activeSessionId = useSelector(state => state.chat.activeSessionId);
-            const { currentProvider, currentModel } = useSelector(state => state.chat);
-
+            const { isStreaming, activeSessionId, currentProvider, currentModel } = useSelector(state => state.chat);
             const handleSend = () => {
                 if (input.trim() && !isStreaming && activeSessionId) {
                     dispatch(streamChatResponse({
-                        sessionId: activeSessionId,
-                        prompt: input,
-                        provider: currentProvider,
-                        model: currentModel
+                         sessionId: activeSessionId, 
+                         prompt: input, 
+                         provider: currentProvider, 
+                         model: currentModel 
                     }));
                     setInput('');
                 }
             };
-            
-            // The stop button now has no function as the new streaming logic doesn't use EventSource
-            const handleStop = () => console.log("Stop functionality to be re-implemented.");
-
             const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }};
-
             return (
-                <div className="p-6 bg-gray-900">
+                <div className="p-6 bg-gray-900/50 backdrop-blur-sm">
                     <div className="relative bg-gray-800 border border-gray-700 rounded-lg p-2 flex items-center">
-                        <textarea
-                            value={input}
-                            onChange={(e) => setInput(e.target.value)}
-                            onKeyDown={handleKeyDown}
-                            placeholder="Type your message..."
-                            rows="1"
-                            className="w-full bg-transparent resize-none outline-none p-2 no-scrollbar"
-                            disabled={isStreaming || !activeSessionId}
+                        <textarea 
+                            value={input} 
+                            onChange={(e) => setInput(e.target.value)} 
+                            onKeyDown={handleKeyDown} 
+                            placeholder="Type your message..." rows="1" className="w-full bg-transparent resize-none outline-none p-2 no-scrollbar" 
+                            disabled={isStreaming || !activeSessionId} 
                         />
-                         {isStreaming ? (
-                            <button onClick={handleStop} className="bg-red-500 text-white font-bold py-2 px-4 rounded-md flex items-center" disabled>
-                                <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 16 16"><path d="M5 3.5h6A1.5 1.5 0 0 1 12.5 5v6a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 11V5A1.5 1.5 0 0 1 5 3.5z"/></svg>
+                        {isStreaming ? (
+                            <button className="bg-red-500 text-white font-bold py-2 px-4 rounded-md flex items-center" disabled>
+                                <svg className="animate-spin h-5 w-5 mr-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                                 Stop
                             </button>
                         ) : (
-                            <button onClick={handleSend} className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-md" disabled={!input.trim() || !activeSessionId}>
+                            <button onClick={handleSend} className="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-4 rounded-md disabled:bg-indigo-400/50" disabled={!input.trim() || !activeSessionId}>
                                 Send
                             </button>
                         )}
@@ -563,20 +488,15 @@
         };
 
         const ChatApp = () => {
-            const { token, logout } = useAuth();
             const dispatch = useDispatch();
-            const isSidebarOpen = useSelector(state => state.chat.isSidebarOpen);
-
+            const { token } = useAuth();
             useEffect(() => {
-                if (token) {
-                    dispatch(fetchSessions());
-                }
+                 if (token) dispatch(fetchSessions()); 
             }, [token, dispatch]);
-
             return (
-                <div className="flex h-screen w-screen">
+                <div className="flex h-full w-full">
                     <Sidebar />
-                    <div className="flex-1 flex flex-col bg-gray-900 transition-all duration-300" style={{ marginLeft: isSidebarOpen ? '16rem' : '0' }}>
+                    <div className="flex-1 flex flex-col bg-gray-900">
                         <ChatArea />
                         <InputSection />
                     </div>
@@ -584,37 +504,16 @@
             );
         };
 
-        // const ChatApp = () => {
-        //     // This is a placeholder for your main chat application UI.
-        //     // You would integrate your Sidebar, ChatArea, etc., here.
-        //     const { user, logout } = useAuth();
-
-        //     return (
-        //          <div className="flex flex-col items-center justify-center h-screen">
-        //             <h1 className="text-4xl">Welcome, {user?.username || 'User'}!</h1>
-        //             <p className="text-gray-400">This is the main chat application.</p>
-        //             <button 
-        //                 onClick={logout}
-        //                 className="px-4 py-2 mt-8 font-bold text-white bg-red-600 rounded hover:bg-red-700"
-        //             >
-        //                 Logout
-        //             </button>
-        //         </div>
-        //     );
-        // };
-
         const App = () => {
             const { token, loading } = useAuth();
-
-            if (loading) {
+            if (loading) { 
                 return (
                     <div className="flex items-center justify-center h-screen">
                         <div className="w-16 h-16 border-4 border-dashed rounded-full animate-spin border-indigo-500"></div>
                     </div>
-                );
+                ); 
             }
-
-            return token ? <ChatApp /> : <AuthForm isLogin={true}/>;
+            return token ? <ChatApp /> : <AuthForm />;
         };
 
         // --- RENDER ---
@@ -629,3 +528,4 @@
     </script>
 </body>
 </html>
+

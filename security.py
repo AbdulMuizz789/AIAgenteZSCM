@@ -18,7 +18,11 @@ def create_access_token(data: dict, expires_delta: timedelta):
     return encoded_jwt
 
 def verify_token(token: str):
-    credentials_exception = Exception("Could not validate credentials,")
+    if token == 'null':
+        credentials_exception = Exception("Null token")
+        raise credentials_exception
+    else:
+        credentials_exception = Exception("Could not validate credentials")
     try:
         payload = jwt.decode(token, os.getenv('SECRET_KEY'), algorithms=[os.getenv('ALGORITHM')])
         email: str = payload.get("sub")
