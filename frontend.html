@@ -36,7 +36,7 @@
         // --- AUTH CONTEXT & API CLIENT ---
         const AuthContext = createContext();
 
-        const apiClient = {
+        const apiClient = { 
             async post(endpoint, data, token, contentType = 'application/json') {
                 const headers = { 'Content-Type': contentType };
                 if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -114,16 +114,30 @@
             const value = { token, user, login, register, logout, loading, apiClient };
             return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
         };
-
+        
         const useAuth = () => useContext(AuthContext);
 
         // --- REDUX THUNKS ---
-        const fetchSessions = createAsyncThunk('chat/fetchSessions', async (_, { extra: { apiClient, token } }) => apiClient.get('/sessions', token));
-        const createNewSession = createAsyncThunk('chat/createNewSession', async (title, { extra: { apiClient, token } }) => apiClient.post('/sessions', { title }, token));
-        const fetchSessionDetails = createAsyncThunk('chat/fetchSessionDetails', async (sessionId, { extra: { apiClient, token } }) => apiClient.get(`/sessions/${sessionId}`, token));
-        const updateSessionTitle = createAsyncThunk('chat/updateSessionTitle', async ({ sessionId, title }, { extra: { apiClient, token } }) => apiClient.put(`/sessions/${sessionId}`, { title }, token));
-        const deleteSession = createAsyncThunk('chat/deleteSession', async (sessionId, { extra: { apiClient, token } }) => {
-            await apiClient.del(`/sessions/${sessionId}`, token);
+        // Thunks now use getState to get the latest token, ensuring they work correctly after login.
+        const fetchSessions = createAsyncThunk('chat/fetchSessions', async (_, { getState, extra: { apiClient } }) => {
+            const { auth } = getState();
+            return apiClient.get('/sessions', auth.token);
+        });
+        const createNewSession = createAsyncThunk('chat/createNewSession', async (title, { getState, extra: { apiClient } }) => {
+            const { auth } = getState();
+            return apiClient.post('/sessions', { title }, auth.token);
+        });
+        const fetchSessionDetails = createAsyncThunk('chat/fetchSessionDetails', async (sessionId, { getState, extra: { apiClient } }) => {
+            const { auth } = getState();
+            return apiClient.get(`/sessions/${sessionId}`, auth.token);
+        });
+        const updateSessionTitle = createAsyncThunk('chat/updateSessionTitle', async ({ sessionId, title }, { getState, extra: { apiClient } }) => {
+            const { auth } = getState();
+            return apiClient.put(`/sessions/${sessionId}`, { title }, auth.token);
+        });
+        const deleteSession = createAsyncThunk('chat/deleteSession', async (sessionId, { getState, extra: { apiClient } }) => {
+            const { auth } = getState();
+            await apiClient.del(`/sessions/${sessionId}`, auth.token);
             return sessionId;
         });
 
@@ -133,14 +147,13 @@
             initialState: {
                 sessions: {},
                 activeSessionId: null,
-                isSidebarOpen: true,
-                sessionStatus: 'idle', // 'idle' | 'loading' | 'succeeded' | 'failed'
+                sessionStatus: 'idle',
                 isStreaming: false,
                 currentProvider: 'gemini',
                 currentModel: 'gemini-pro',
+                isSidebarOpen: true,
             },
             reducers: {
-                toggleSidebar: (state) => { state.isSidebarOpen = !state.isSidebarOpen; },
                 startStream: (state, action) => {
                     state.isStreaming = true;
                     const { sessionId, userMessage } = action.payload;
@@ -158,6 +171,9 @@
                     state.currentProvider = action.payload.provider;
                     state.currentModel = action.payload.model;
                 },
+                toggleSidebar: (state) => {
+                    state.isSidebarOpen = !state.isSidebarOpen;
+                },
             },
             extraReducers: (builder) => {
                 builder
@@ -169,11 +185,10 @@
                             return acc;
                         }, {});
                         if (!state.activeSessionId && action.payload.length > 0) {
-                            state.activeSessionId = action.payload[0].id;
+                            // Set the first session as active by default
+                            const sortedSessions = action.payload.sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+                            state.activeSessionId = sortedSessions[0].id;
                         }
-                    })
-                    .addCase(fetchSessions.rejected, (state) => {
-                        state.sessionStatus = 'failed';
                     })
                     .addCase(createNewSession.fulfilled, (state, action) => {
                         const newSession = action.payload;
@@ -189,13 +204,15 @@
                     .addCase(deleteSession.fulfilled, (state, action) => {
                         delete state.sessions[action.payload];
                         if (state.activeSessionId === action.payload) {
-                            state.activeSessionId = Object.keys(state.sessions)[0] || null;
+                            const remainingSessions = Object.values(state.sessions).sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+                            state.activeSessionId = remainingSessions.length > 0 ? remainingSessions[0].id : null;
                         }
                     });
             }
         });
 
-        const { toggleSidebar, startStream, appendStream, endStream, setActiveSessionId, setModelAndProvider } = chatSlice.actions;
+        const { startStream, appendStream, endStream, setActiveSessionId, setModelAndProvider, toggleSidebar } = chatSlice.actions;
+
         // --- STREAMING LOGIC ---
         const streamChatResponse = (payload) => async (dispatch, getState) => {
             const { token } = getState().auth;
@@ -241,18 +258,30 @@
         };
 
         // --- REDUX STORE ---
+        // The auth slice now dynamically updates when the AuthProvider's token changes.
+        const authSlice = createSlice({
+            name: 'auth',
+            initialState: { token: localStorage.getItem('authToken') },
+            reducers: {
+                setAuthToken: (state, action) => {
+                    state.token = action.payload;
+                }
+            }
+        });
+        const { setAuthToken } = authSlice.actions;
+
         const store = configureStore({
             reducer: { 
                 chat: chatSlice.reducer,
-                auth: (state = { token: localStorage.getItem('authToken') }) => state
+                auth: authSlice.reducer
             },
             middleware: (getDefaultMiddleware) => getDefaultMiddleware({
-                thunk: { extraArgument: { apiClient, token: localStorage.getItem('authToken') } }
+                thunk: { extraArgument: { apiClient } }
             }),
         });
         
         // --- COMPONENTS ---
-        const AuthForm = () => {
+        const AuthForm = () => { 
             const [isLogin, setIsLogin] = useState(true);
             const [email, setEmail] = useState('');
             const [password, setPassword] = useState('');
@@ -355,16 +384,11 @@
             const { user, logout } = useAuth();
             const { sessions: sessionData, activeSessionId, sessionStatus, isSidebarOpen } = useSelector(state => state.chat);
             const sessions = Object.values(sessionData).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-
-            useEffect(() => {
-                if (sessionStatus === 'idle') dispatch(fetchSessions());
-            }, [sessionStatus, dispatch]);
             
             const handleSetActive = (sessionId) => {
-                // if (sessionId !== activeSessionId) {
+                if (sessionId !== activeSessionId) {
                     dispatch(setActiveSessionId(sessionId));
-                    dispatch(fetchSessionDetails(sessionId));
-                // }
+                }
             }
 
             return (
@@ -487,11 +511,22 @@
         const ChatApp = () => {
             const dispatch = useDispatch();
             const { token } = useAuth();
-            const isSidebarOpen = useSelector(state => state.chat.isSidebarOpen);
+            const { isSidebarOpen, activeSessionId, sessions, sessionStatus } = useSelector(state => state.chat);
             
+            // Effect to fetch initial sessions
             useEffect(() => { 
-                if (token) dispatch(fetchSessions());
-            }, [token, dispatch]);
+                if (token && sessionStatus === 'idle') {
+                    dispatch(fetchSessions());
+                }
+            }, [token, sessionStatus, dispatch]);
+            
+            // Effect to fetch messages for the active session if they aren't loaded
+            useEffect(() => {
+                if (activeSessionId && sessions[activeSessionId] && sessions[activeSessionId].messages.length === 0) {
+                    dispatch(fetchSessionDetails(activeSessionId));
+                }
+            }, [activeSessionId, sessions, dispatch]);
+
 
             return (
                 <div className="flex h-full w-full">
@@ -518,6 +553,21 @@
 
         const App = () => {
             const { token, loading } = useAuth();
+            const dispatch = useDispatch();
+            const sessionStatus = useSelector(state => state.chat.sessionStatus);
+
+            // This effect syncs the AuthProvider token with the Redux store
+            useEffect(() => {
+                dispatch(setAuthToken(token));
+            }, [token, dispatch]);
+
+            // This effect triggers the initial session fetch upon successful login/token validation
+            useEffect(() => {
+                if (token && sessionStatus === 'idle') {
+                    dispatch(fetchSessions());
+                }
+            }, [token, sessionStatus, dispatch]);
+
             if (loading) { 
                 return (
                     <div className="flex items-center justify-center h-screen">
@@ -527,7 +577,7 @@
             }
             return token ? <ChatApp /> : <AuthForm />;
         };
-
+        
         // --- RENDER ---
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(
