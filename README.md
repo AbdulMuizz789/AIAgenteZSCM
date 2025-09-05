@@ -45,6 +45,11 @@ Go to alembic.ini and set the sqlalchemy.url to your postgresql database
 ```ini
 sqlalchemy.url = postgresql://user:password@localhost/dbname
 ```
+Then edit target_metadata in alembic/env.py to this
+```py
+import models
+target_metadata = models.Base.metadata
+```
 Then
 ```bash
 alembic revision --autogenerate -m "Initialize DB"
@@ -67,5 +72,6 @@ This project satisfies these mandatory requirements:
 - ✅ **UI/UX Polish** (10 marks) - Modern ChatGPT-like interface 
 <!-- - ✅ **Error Handling + Limits** (10 marks) - Rate limiting, token caps  -->
 - ✅ **Repo/Docs Hygiene** (10 marks) - Professional structure
+
 
 
