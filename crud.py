@@ -49,10 +49,20 @@ def create_session(db: Session, session: schemas.SessionCreate, user_id: uuid.UU
     return new_session
 
 def update_session_title(db: Session, session_id: uuid.UUID, user_id: uuid.UUID, title: str) -> Optional[Session]:
-    pass
+    session = db.query(models.Session).filter(models.Session.id == session_id, models.Session.user_id == user_id).first()
+    if session:
+        session.title = title
+        db.commit()
+        db.refresh(session)
+    return session
 
 def delete_session(db: Session, session_id: uuid.UUID, user_id: uuid.UUID) -> bool:
-    pass
+    session = db.query(models.Session).filter(models.Session.id == session_id, models.Session.user_id == user_id).first()
+    if session:
+        db.delete(session)
+        db.commit()
+        return True
+    return False
 
 def create_message(db: Session, role: str, session_id: uuid.UUID, content: str, user_id: uuid.UUID):
     user_message_db = models.Message(
