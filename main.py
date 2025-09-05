@@ -43,7 +43,7 @@ class BaseProvider:
 class OpenAIProvider(BaseProvider):
     def __init__(self):
         from openai import AsyncOpenAI
-        self.client = AsyncOpenAI(base_url='https://api.zukijourney.com/v1',api_key=os.getenv("API_KEY"))
+        self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     async def stream_chat(self, prompt: str, model: str, history: list = []):
         stream = await self.client.chat.completions.create(
@@ -73,7 +73,7 @@ class GeminiProvider(BaseProvider):
 class AnthropicProvider(BaseProvider):
     def __init__(self):
         from openai import AsyncOpenAI
-        self.client = AsyncOpenAI(base_url='https://api.zukijourney.com/v1', api_key=os.getenv("ANTHROPIC_API_KEY"))
+        self.client = AsyncOpenAI(base_url="https://api.anthropic.com/v1/", api_key=os.getenv("ANTHROPIC_API_KEY"))
 
     async def stream_chat(self, prompt: str, model: str):
         async with self.client.messages.stream(
