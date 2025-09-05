@@ -36,7 +36,7 @@
         // --- AUTH CONTEXT & API CLIENT ---
         const AuthContext = createContext();
 
-        const apiClient = { 
+        const apiClient = {
             async post(endpoint, data, token, contentType = 'application/json') {
                 const headers = { 'Content-Type': contentType };
                 if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -113,8 +113,7 @@
 
             const value = { token, user, login, register, logout, loading, apiClient };
             return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-        };
-        
+        };  
         const useAuth = () => useContext(AuthContext);
 
         // --- REDUX THUNKS ---
@@ -181,7 +180,7 @@
                     .addCase(fetchSessions.fulfilled, (state, action) => {
                         state.sessionStatus = 'succeeded';
                         state.sessions = action.payload.reduce((acc, session) => {
-                            acc[session.id] = { ...session, messages: [] };
+                            acc[session.id] = { ...session, messages: [], messagesLoaded: false };
                             return acc;
                         }, {});
                         if (!state.activeSessionId && action.payload.length > 0) {
@@ -192,11 +191,11 @@
                     })
                     .addCase(createNewSession.fulfilled, (state, action) => {
                         const newSession = action.payload;
-                        state.sessions[newSession.id] = { ...newSession, messages: [] };
+                        state.sessions[newSession.id] = { ...newSession, messages: [], messagesLoaded: true };
                         state.activeSessionId = newSession.id;
                     })
                     .addCase(fetchSessionDetails.fulfilled, (state, action) => {
-                        state.sessions[action.payload.id] = action.payload;
+                        state.sessions[action.payload.id] = { ...action.payload, messagesLoaded: true };
                     })
                     .addCase(updateSessionTitle.fulfilled, (state, action) => {
                         state.sessions[action.payload.id].title = action.payload.title;
@@ -456,6 +455,8 @@
 
             if (!session) { 
                 return <div className="flex-1 flex items-center justify-center"><p>Select or create a new session to begin.</p></div>; 
+            } else if (session.messagesLoaded && session.messages.length === 0) {
+                return <div className="flex-1 flex items-center justify-center"><p>Enter message to chat with me</p></div>;
             }
             return (
                 <div className="flex-1 overflow-y-auto p-6">
@@ -510,19 +511,10 @@
 
         const ChatApp = () => {
             const dispatch = useDispatch();
-            const { token } = useAuth();
-            const { isSidebarOpen, activeSessionId, sessions, sessionStatus } = useSelector(state => state.chat);
+            const { isSidebarOpen, activeSessionId, sessions } = useSelector(state => state.chat);
             
-            // Effect to fetch initial sessions
-            useEffect(() => { 
-                if (token && sessionStatus === 'idle') {
-                    dispatch(fetchSessions());
-                }
-            }, [token, sessionStatus, dispatch]);
-            
-            // Effect to fetch messages for the active session if they aren't loaded
             useEffect(() => {
-                if (activeSessionId && sessions[activeSessionId] && sessions[activeSessionId].messages.length === 0) {
+                if (activeSessionId && sessions[activeSessionId] && !sessions[activeSessionId].messagesLoaded) {
                     dispatch(fetchSessionDetails(activeSessionId));
                 }
             }, [activeSessionId, sessions, dispatch]);
@@ -559,14 +551,10 @@
             // This effect syncs the AuthProvider token with the Redux store
             useEffect(() => {
                 dispatch(setAuthToken(token));
-            }, [token, dispatch]);
-
-            // This effect triggers the initial session fetch upon successful login/token validation
-            useEffect(() => {
                 if (token && sessionStatus === 'idle') {
                     dispatch(fetchSessions());
                 }
-            }, [token, sessionStatus, dispatch]);
+            }, [token, dispatch]);
 
             if (loading) { 
                 return (
@@ -577,7 +565,7 @@
             }
             return token ? <ChatApp /> : <AuthForm />;
         };
-        
+
         // --- RENDER ---
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(
