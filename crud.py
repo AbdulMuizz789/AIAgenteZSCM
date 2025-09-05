@@ -75,4 +75,3 @@ def create_message(db: Session, role: str, session_id: uuid.UUID, content: str, 
 
 def get_messages(db: Session, session_id: uuid.UUID, user_id: uuid.UUID) -> list[models.Message]:
     return db.query(models.Message).filter(models.Message.session_id == session_id).order_by(models.Message.created_at).all()
-

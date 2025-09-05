@@ -282,9 +282,13 @@
         const { setAuthToken } = authSlice.actions;
 
         const store = configureStore({
-            reducer: {
-                chat: chatSlice.reducer
-            }
+            reducer: { 
+                chat: chatSlice.reducer,
+                auth: authSlice.reducer
+            },
+            middleware: (getDefaultMiddleware) => getDefaultMiddleware({
+                thunk: { extraArgument: { apiClient } }
+            }),
         });
         
         // --- COMPONENTS ---
