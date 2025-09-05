@@ -51,7 +51,7 @@ alembic revision --autogenerate -m "Initialize DB"
 alembic upgrade head
 ```
 ### Configure: 
-Copy env.example to .env and add your API keys, Postgres username and password and Secret key for JWT
+Copy env.example to .env and add your API keys, Postgre username, password, and Database name along with a Secret key for JWT
 ### Run Backend on port 8000: 
 ```bash
 uvicorn main:app
@@ -66,7 +66,6 @@ This project satisfies these mandatory requirements:
 - ✅ **Persistence + Restore** (20 marks) - Session management 
 - ✅ **UI/UX Polish** (10 marks) - Modern ChatGPT-like interface 
 <!-- - ✅ **Error Handling + Limits** (10 marks) - Rate limiting, token caps  -->
-
 - ✅ **Repo/Docs Hygiene** (10 marks) - Professional structure
 
 
