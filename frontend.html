@@ -37,9 +37,10 @@
         const AuthContext = createContext();
 
         const apiClient = {
-            async post(endpoint, data, token, contentType = 'application/json') {
+            async post(endpoint, data, token = null, contentType = 'application/json') {
                 const headers = { 'Content-Type': contentType };
-                if (token) headers['Authorization'] = `Bearer ${token}`;
+                const authToken = token || localStorage.getItem('authToken');
+                if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
                 
                 let body;
                 if (contentType === 'application/json') {
@@ -55,7 +56,8 @@
                 return responseData;
             },
             async get(endpoint, token) {
-                const headers = { 'Authorization': `Bearer ${token}` };
+                const authToken = token || localStorage.getItem('authToken');
+                const headers = { 'Authorization': `Bearer ${authToken}` };
                 const response = await fetch(`${API_BASE_URL}${endpoint}`, { headers });
                 const responseData = await response.json();
                 if (!response.ok) throw responseData;
@@ -124,8 +126,7 @@
        // --- ASYNC THUNKS ---
         const fetchSessions = createAsyncThunk('chat/fetchSessions', async (_, { getState, rejectWithValue }) => {
             try {
-                const token = getState().auth.token;
-                return await apiClient.get('/sessions', token);
+                return await apiClient.get('/sessions');
             } catch(e) { return rejectWithValue(e.message) }
         });
 
@@ -198,6 +199,7 @@
                     if (!state.activeSessionId && action.payload.length > 0) {
                         state.activeSessionId = action.payload[0].id;
                     }
+                    state.sessionStatus = 'succeeded';
                 })
                 .addCase(fetchSessions.pending, (state) => {
                     state.sessionStatus = 'loading';
@@ -218,10 +220,9 @@
             }
         });
 
-        const { startStream, appendStream, endStream, setActiveSessionId, setModelAndProvider } = chatSlice.actions;
-        const { toggleSidebar } = chatSlice.actions;
+        const { toggleSidebar, startStream, appendStream, endStream, setActiveSessionId, setModelAndProvider } = chatSlice.actions;
 
-        // --- Main Redux Store (Auth slice is just conceptual here) ---
+        // --- Main Redux Store ---
         const store = configureStore({
             reducer: { 
                 chat: chatSlice.reducer
