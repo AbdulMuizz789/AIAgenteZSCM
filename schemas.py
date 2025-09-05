@@ -5,6 +5,15 @@ import uuid
 from pydantic import BaseModel
 from datetime import datetime
 
+class User(BaseModel):
+    id: uuid.UUID
+    username: str
+    email: str
+    created_at: datetime
+    last_login: datetime | None = None
+    class Config:
+        orm_mode = True
+
 class Message(BaseModel):
     id: uuid.UUID
     role: str
@@ -29,3 +38,15 @@ class ChatRequest(BaseModel):
     prompt: str
     provider: str
     model: str
+
+class SessionUpdate(BaseModel):
+    title: str
+
+class UserCreate(BaseModel):
+    username: str
+    email: str
+    password: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str

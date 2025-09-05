@@ -5,25 +5,23 @@ import os
 import asyncio
 import json
 import uuid
-from fastapi import FastAPI, Request, Depends, HTTPException
+from fastapi import FastAPI, Request, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.security import OAuth2PasswordRequestForm
 from dotenv import load_dotenv
+from datetime import timedelta
 
-# --- Database Imports ---
 from sqlalchemy.orm import Session
-from database import SessionLocal, engine, Base
-import models
-import schemas
+import models, schemas, crud, security
+from database import engine, get_db
 
-# Create database tables
-Base.metadata.create_all(bind=engine)
+# Create database tables if they don't exist
+models.Base.metadata.create_all(bind=engine)
 
-# --- Load API Keys ---
 load_dotenv()
 
-# --- AI Provider Abstraction (from previous version, unchanged) ---
-# [NOTE: The AIProviderFactory and individual provider classes remain the same]
+# --- AI Provider Abstraction (Dummy for Demonstration) ---
 class AIProviderFactory:
     @staticmethod
     def get_provider(provider_name):
@@ -111,7 +109,6 @@ class OllamaProvider(BaseProvider):
 # --- FastAPI Application ---
 app = FastAPI()
 
-# --- CORS Middleware ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -120,101 +117,103 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Database Dependency ---
-def get_db():
-    db = SessionLocal()
+# --- Authentication Endpoints ---
+@app.post("/token", response_model=schemas.Token)
+def login_for_access_token(db: Session = Depends(get_db), form_data: OAuth2PasswordRequestForm = Depends()):
     try:
-        yield db
-    finally:
-        db.close()
+        user = crud.authenticate_user(db, email=form_data.username, password=form_data.password)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        access_token_expires = timedelta(minutes=security.ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = security.create_access_token(
+            data={"sub": user.email}, expires_delta=access_token_expires
+        )
+    except Exception as e:
+        print(f"Error during login: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error"
+        )
+    return {"access_token": access_token, "token_type": "bearer"}
 
-# --- API Endpoints ---
+@app.post("/users/", response_model=schemas.User)
+def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
+    db_user = crud.get_user_by_email(db, email=user.email)
+    if db_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    return crud.create_user(db=db, user=user)
 
-# A mock user for demonstration purposes. In a real app, this would come from a JWT token.
-MOCK_USER_ID = uuid.UUID("123e4567-e89b-12d3-a456-426614174000")
+@app.get("/users/me/", response_model=schemas.User)
+def read_users_me(current_user: models.User = Depends(security.get_current_user)) -> schemas.User:
+    return current_user
 
+# --- Session Endpoints ---
 @app.get("/sessions", response_model=list[schemas.Session])
-def get_sessions(db: Session = Depends(get_db)):
-    """Get all sessions for the mock user."""
-    return db.query(models.Session).filter(models.Session.user_id == MOCK_USER_ID).all()
+def get_sessions(db: Session = Depends(get_db), current_user: models.User = Depends(security.get_current_user)):
+    return crud.get_sessions(db=db, user_id=current_user.id)
 
 @app.post("/sessions", response_model=schemas.Session)
-def create_session(session_create: schemas.SessionCreate, db: Session = Depends(get_db)):
-    """Create a new session."""
-    new_session = models.Session(
-        user_id=MOCK_USER_ID,
-        title=session_create.title or "New Chat"
-    )
-    db.add(new_session)
-    db.commit()
-    db.refresh(new_session)
-    return new_session
+def create_session(session_create: schemas.SessionCreate, db: Session = Depends(get_db), current_user: models.User = Depends(security.get_current_user)):
+    return crud.create_session(db=db, session=session_create, user_id=current_user.id)
 
 @app.get("/sessions/{session_id}", response_model=schemas.Session)
-def get_session_details(session_id: uuid.UUID, db: Session = Depends(get_db)):
-    """Get details and messages for a specific session."""
-    session = db.query(models.Session).filter(models.Session.id == session_id, models.Session.user_id == MOCK_USER_ID).first()
+def get_session_details(session_id: uuid.UUID, db: Session = Depends(get_db), current_user: models.User = Depends(security.get_current_user)):
+    session = crud.get_session(db=db, session_id=session_id, user_id=current_user.id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
 
+@app.put("/sessions/{session_id}", response_model=schemas.Session)
+def update_session_title(session_id: uuid.UUID, session_update: schemas.SessionUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(security.get_current_user)):
+    return crud.update_session_title(db=db, session_id=session_id, user_id=current_user.id, title=session_update.title)
 
-async def stream_and_save(request: Request, payload: schemas.ChatRequest, db: Session):
-    """Handles the streaming logic and saves the conversation to the DB."""
+@app.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_session(session_id: uuid.UUID, db: Session = Depends(get_db), current_user: models.User = Depends(security.get_current_user)):
+    success = crud.delete_session(db=db, session_id=session_id, user_id=current_user.id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return None
+
+# --- Chat Streaming Endpoint ---
+async def stream_and_save(request: Request, payload: schemas.ChatRequest, db: Session, user_id: uuid.UUID):
+    # ... (Logic from previous version, adapted to use crud functions)
     # 1. Save User Message
-    user_message_db = models.Message(
-        session_id=payload.session_id,
-        role="user",
-        content=payload.prompt
-    )
-    db.add(user_message_db)
-    db.commit()
-
+    crud.create_message(db, session_id=payload.session_id, role="user", content=payload.prompt, user_id=user_id)
+    
     # 2. Stream AI Response
     full_response = ""
     try:
-        # Fetch message history for context
-        history_db = db.query(models.Message).filter(models.Message.session_id == payload.session_id).order_by(models.Message.created_at).all()
+        history_db = crud.get_messages(db, session_id=payload.session_id, user_id=user_id)
         history = [{"role": m.role, "content": m.content} for m in history_db]
 
         ai_provider = AIProviderFactory.get_provider(payload.provider)
         async for token in ai_provider.stream_chat(payload.prompt, payload.model, history):
-            if await request.is_disconnected():
-                print("Client disconnected.")
-                break
-            
-            sse_data = {"delta": token}
-            yield f"data: {json.dumps(sse_data)}\n\n"
+            if await request.is_disconnected(): break
+            yield f"data: {json.dumps({'delta': token})}\n\n"
             full_response += token
             await asyncio.sleep(0.01)
 
-        # 3. Save AI Message
         if full_response:
-            ai_message_db = models.Message(
-                session_id=payload.session_id,
-                role="assistant",
-                content=full_response
-            )
-            db.add(ai_message_db)
-            db.commit()
-            
+             crud.create_message(db, session_id=payload.session_id, role="assistant", content=full_response, user_id=user_id)
+        
         yield "data: [DONE]\n\n"
     except Exception as e:
         print(f"Error during streaming: {e}")
         import traceback
         traceback.print_exc()
         error_data = {"error": str(e)}
-        yield f"data: {json.dumps(error_data)}\n\n"
-
+        yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
 @app.post("/chat/stream")
-async def chat_stream(request: Request, payload: schemas.ChatRequest, db: Session = Depends(get_db)):
-    """Main endpoint for streaming chat responses."""
-    session = db.query(models.Session).filter(models.Session.id == payload.session_id).first()
-    if not session or session.user_id != MOCK_USER_ID:
+async def chat_stream(request: Request, payload: schemas.ChatRequest, db: Session = Depends(get_db), current_user: models.User = Depends(security.get_current_user)):
+    session = crud.get_session(db=db, session_id=payload.session_id, user_id=current_user.id)
+    if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-        
     return StreamingResponse(
-        stream_and_save(request, payload, db),
+        stream_and_save(request, payload, db, current_user.id),
         media_type="text/event-stream"
     )
