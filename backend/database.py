@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Replace with your PostgreSQL connection string
-SQLALCHEMY_DATABASE_URL = f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}@localhost/{os.getenv('POSTGRES_DB')}"
+SQLALCHEMY_DATABASE_URL = f"{os.getenv('DATABASE_URL')}"
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

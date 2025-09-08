@@ -9,7 +9,7 @@ from database import get_db
 
 load_dotenv()
 
-ACCESS_TOKEN_EXPIRE_MINUTES = 30  # 30 minutes
+ACCESS_TOKEN_EXPIRE_MINUTES = os.getenv('ACCESS_TOKEN_EXPIRE_MINUTES')
 
 def create_access_token(data: dict, expires_delta: timedelta):
     expire = datetime.utcnow() + expires_delta
