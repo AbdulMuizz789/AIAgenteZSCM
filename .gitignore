@@ -1,8 +1,5 @@
 .env
-chat_log.txt
-chatbot.py
-test.py
-/__pycache__
-/alembic
-alembic.ini
+backend/__pycache__
+backend/alembic
+backend/alembic.ini
 /.vscode

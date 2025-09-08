@@ -6,22 +6,24 @@ Chatity is a sophisticated, full-stack AI chatbot application featuring real-tim
 ## 📦 Project Structure
 ```
 chatity-app/
-├─ frontend/
-|  └─ frontend.html          # React frontend
-├─ backend/
+├─ frontend/                 # React frontend
+|  └─ frontend.html             # HTML file with embedded React app
+├─ backend/                  # FastAPI backend
 |  ├─ crud.py                   # Database Operations
 |  ├─ database.py               # Database configuration
 |  ├─ main.py                   # Main FastAPI with Endpoints
 |  ├─ models.py                 # SQLAlchemy database models
 |  ├─ schemas.py                # Pydantic validation
 |  └─ security.py               # Authenticator
-├─README.md                  # Comprehensive setup guide
+├─ API_DOCUMENTATION.md      # API endpoint documentation
+├─ ARCHITECTURE.md           # System architecture and design
+├─ README.md                 # Comprehensive setup guide
 ├─ env.example               # example of .env
 └─ requirements.txt          # Python dependencies
 ```
 ## 🛠️ Technology Stack
-| Area     | Technology                             |
-|----------|----------------------------------------|
+| Area         | Technology                             |
+|----------    |----------------------------------------|
 | **Frontend** | React.js, Redux Toolkit, Tailwind CSS  |
 | **Backend**  | FastAPI (Python 3.8+), Uvicorn         |
 | **Database** | PostgreSQL                             |
@@ -68,7 +70,7 @@ Now, edit the ```.env``` file with your database URL and AI provider API keys.
 
 ```.env``` file:
 ```
-DATABASE_URL="postgresql+asyncpg://user:password@localhost/chatitydb"
+DATABASE_URL="postgresql://user:password@localhost/chatitydb"
 SECRET_KEY="your_super_secret_key_for_jwt"
 ALGORITHM="HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES=30
@@ -80,16 +82,24 @@ ANTHROPIC_API_KEY="..."
 ```
 #### 3. Database Migration:
 Initialize and apply the database migrations using Alembic.
+
+**Important Note:** These commands are to be used the ```backend/``` folder
 ```bash
 alembic init alembic
 ```
 Go to alembic.ini and set the sqlalchemy.url to your postgresql database
 ```ini
-sqlalchemy.url = postgresql+asyncpg://user:password@localhost/dbname
+sqlalchemy.url = postgresql://user:password@localhost/dbname
 ```
-Then run the commands to migrate the database
+Then, in alembic/env.py, modify it to import your models so that Alembic can detect the schema:
+```python
+# Import your models here
+from backend import models
+
+target_metadata = models.Base.metadata
+```
+Then run this command to migrate the database
 ```bash
-# alembic revision --autogenerate -m "Initialize DB"
 alembic upgrade head
 ```
 #### 4. Run the Backend Server:
@@ -146,23 +156,7 @@ Placeholder for a screenshot of the main chat interface.
 
 Placeholder for a screenshot of the profile editing modal.
 ## 👥 Team & Contributions
-| Member | Role | Contributions |
-| ---- | ---- | ---- |
-| Abdul Muizz | Full-Stack Lead | Project architecture, backend, frontend, deployment |
+| Member           | Role              | Contributions                                            |
+| ----             | ----              | ----                                                     |
+| Abdul Muizz      | Full-Stack Lead   | Project architecture, backend, frontend, deployment      |
 | Jampala Swathvik | Backend Developer | API development, database schema, debugging, and testing |
-<!-- 
-# Chatity - A Multi-Provider AI Chatbot Platform
-
-Follow these instructions to set up and run the project locally.
-### Prerequisites
-- Python 3.8+ and ```pip```
-- Node.js and ```npm``` (only to serve the frontend, not required for development as it's a single HTML file)
-- PostgreSQL database server
-- Git
-### Installation & Setup
-#### 1. Clone the repository:
-```bash
-git clone [https://github.com/](https://github.com/)[Your-Username]/omnichat.git
-cd omnichat
-```
- -->
