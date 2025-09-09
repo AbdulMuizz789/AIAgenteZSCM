@@ -1,4 +1,4 @@
-﻿# Chatity
+# Chatity
 Chatity is a sophisticated, full-stack AI chatbot application featuring real-time streaming responses, multi-provider AI model support (OpenAI, Anthropic, Google Gemini, Ollama), and a professional-grade, persistent user interface.
 
 ---
@@ -150,11 +150,16 @@ curl -N -X POST http://localhost:8000/chat/stream \
 ```
 You will see the token-by-token response streamed directly to your terminal.
 ## 🖼️ Screenshots
-Placeholder for a screenshot of the login screen.
 
-Placeholder for a screenshot of the main chat interface.
+### Login Screen 
+<img width="1920" height="1080" alt="Screenshot of the login screen." src="https://github.com/user-attachments/assets/8b1ea1b5-f4f9-4961-8ebc-a58200f435c7" />
 
-Placeholder for a screenshot of the profile editing modal.
+### Main Chat 
+<img width="1920" height="1080" alt="Screenshot of the main chat interface." src="https://github.com/user-attachments/assets/58614902-4442-4e83-843d-4eacee2c2fed" />
+
+### Profile Edit 
+<img width="1920" height="1080" alt="Screenshot of the profile editing modal." src="https://github.com/user-attachments/assets/2ebe5811-89fe-4e3f-a4aa-89b9709c28ad" />
+
 ## 👥 Team & Contributions
 | Member           | Role              | Contributions                                            |
 | ----             | ----              | ----                                                     |
